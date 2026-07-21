@@ -111,12 +111,6 @@ The official CSV files and preprocessing details are maintained at
 `https://github.com/THUNLP-MT/StreamingBench`. The evaluator in this repository expects the
 preprocessed `questions_real.json` and flat `videos/` directory.
 
-## Tests
-
-```bash
-python -m unittest discover -s tests -v
-```
-
 ## OVO-Bench baseline
 
 The baseline evaluates Backward, Realtime, and Forward with a frozen Qwen3-VL model:
@@ -212,7 +206,6 @@ main_experiments/eval_qwen3vl_ovo.py      # recent/uniform/CLIP/text-memory base
 main_experiments/eval_qwen3vl_ovo_dual_role.py
 main_experiments/eval_qwen3vl_ovo_dual_role_forward.py
 scoring/score_ovo_bench.py
-tests/                                     # deterministic memory and tool tests
 ```
 
 ## License and data

@@ -3,6 +3,8 @@ __pycache__/
 *.pyo
 .claude/
 docs/
+efficiency/
+tests/
 
 # Local datasets and generated artifacts
 data/
