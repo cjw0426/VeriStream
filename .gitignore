@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .claude/
+docs/
 
 # Local datasets and generated artifacts
 data/

@@ -15,12 +15,26 @@ implemented locally; no video-agent framework is required.
 - Hybrid-4: verified historical evidence plus four recent raw frames.
 - Training-free: model weights are frozen and no fine-tuning is used.
 
-The complete design, failure analysis, experiment tables, and reproduction commands are in:
+The design, failure analysis, results, and reproduction settings are summarized below so the code
+repository remains self-contained.
 
-- [实验报告](docs/veristream/实验报告.md)
-- [设计说明文档](docs/veristream/设计说明文档.md)
-- [复现指南](docs/veristream/复现指南.md)
-- [LaTeX 结果表](docs/veristream/ovo_results_tables.tex)
+## Project basis and acknowledgements
+
+This project is developed on top of the [SimpleStream](https://github.com/EvolvingLMMs-Lab/SimpleStream)
+recent-window baseline. We thank the SimpleStream authors for the baseline implementation and OVO-Bench
+evaluation pipeline. We also thank the Qwen-VL, OVO-Bench, and StreamingBench authors for releasing the
+models and benchmarks used here.
+
+## Method summary
+
+For each causal video prefix, the perception role builds a question-independent evidence index. Each
+observation keeps its time interval and raw chunk pointers. The reasoning role retrieves candidate
+observations with `search_memory`, requests local visual evidence with `inspect_segment`, and promotes
+only supported candidates through `verify_evidence`; conflicting candidates are quarantined. The final
+Hybrid-4 answer receives verified historical memory plus the four most recent raw frames. This preserves
+long-range evidence without removing the current visual state. `lib/veristream.py` contains the shared
+memory status model and the single-role StreamingBench compatibility path; `lib/veristream_dual_role.py`
+contains the current evidence index and dual-role controller.
 
 ## Installation
 
@@ -163,17 +177,39 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes=4 \
 Forward uses `main_experiments/eval_qwen3vl_ovo_dual_role_forward.py` with the same model and
 configuration. Keep the same `--result-dir` to resume from rank checkpoints.
 
+## Recorded OVO-Bench results
+
+All values below are percentages from the same OVO-Bench split scoring protocol. `Total` is the
+arithmetic mean of the three split averages; the text-only dual-role ablation has no Forward run and
+therefore uses a two-split mean marked with `*`.
+
+| Model / method | Backward | Realtime | Forward | Total |
+| --- | ---: | ---: | ---: | ---: |
+| Qwen3-VL-2B Recent4 | 53.56 | 74.23 | 42.67 | 56.82 |
+| Qwen3-VL-2B Recent4 + CLIP-TopK16 | 52.73 | 69.52 | 43.12 | 55.13 |
+| Qwen3-VL-2B action-fact memory + Uniform16 | 56.91 | 73.68 | 38.84 | 56.48 |
+| Qwen3-VL-8B Recent4 | 53.92 | 81.47 | 39.40 | 58.26 |
+| Qwen3-VL-8B Recent16 | 55.06 | 77.80 | 43.94 | 58.93 |
+| Qwen3-VL-8B Recent32 | 57.35 | 76.57 | 46.08 | 60.00 |
+| Qwen3-VL-8B action-fact memory + Uniform16 | 62.09 | 79.65 | 39.04 | 60.26 |
+| VeriStream text-only | 55.05 | 44.91 | -- | 49.98* |
+| VeriStream Hybrid-4 | 57.60 | 79.18 | 39.07 | 58.62 |
+
+The main finding is a memory-perception trade-off: larger raw windows improve some historical or
+forward questions but reduce real-time focus. Text memory improves historical recall on 8B while
+preserving recent frames. Hybrid-4 restores real-time perception over text-only dual-role inference
+by supplying raw recent vision, while retaining verified historical evidence.
+
 ## Code layout
 
 ```text
 lib/veristream.py                         # single-role memory and tool state machine
 lib/veristream_dual_role.py               # evidence index and dual-role orchestration
+lib/clip_topk_selector.py                 # CLIP semantic frame selection
 lib/recent_window_eval_qwen3.py           # Qwen3-VL decoding and evaluation helpers
 main_experiments/eval_qwen3vl_ovo.py      # recent/uniform/CLIP/text-memory baseline
 main_experiments/eval_qwen3vl_ovo_dual_role.py
 main_experiments/eval_qwen3vl_ovo_dual_role_forward.py
-main_experiments/build_veristream_evidence_index.py
-main_experiments/query_veristream_dual_role.py
 scoring/score_ovo_bench.py
 tests/                                     # deterministic memory and tool tests
 ```
