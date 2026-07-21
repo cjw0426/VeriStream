@@ -1,8 +1,6 @@
 # Shared dependencies for the SimpleStream codebase.
 # Install torch / torchvision separately for your platform first
-# (see https://pytorch.org/get-started/locally/), then install one of:
-#   - requirements-qwen3.txt   (Qwen3-VL stack)
-#   - requirements-qwen25.txt  (Qwen2.5-VL stack)
+# (see https://pytorch.org/get-started/locally/), then install requirements-qwen3.txt.
 
 # Video decoding
 av>=14.4.0
@@ -14,5 +12,5 @@ numpy>=1.24.0
 # Progress bars
 tqdm>=4.65.0
 
-# Qwen-VL preprocessing helper (used by both backbones)
+# Qwen3-VL preprocessing helper
 qwen-vl-utils==0.0.14

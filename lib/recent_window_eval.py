@@ -62,11 +62,7 @@ class RecentWindowResult:
 
 
 class RecentWindowQAModel:
-    """Minimal Qwen-VL wrapper for the recent-window recency baseline.
-
-    Qwen2.5-VL keeps one ``<|vision_start|>...<|vision_end|>`` block per frame.
-    Qwen3-VL overrides this path with the single-block cached builder.
-    """
+    """Minimal Qwen3-VL wrapper for recent-window and memory baselines."""
 
     def __init__(
         self,
@@ -77,14 +73,9 @@ class RecentWindowQAModel:
     ) -> None:
         from transformers import AutoProcessor
 
-        if "qwen3" in model_name.lower():
-            from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-                Qwen3VLForConditionalGeneration as _ModelClass,
-            )
-        else:
-            from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-                Qwen2_5_VLForConditionalGeneration as _ModelClass,
-            )
+        from transformers.models.qwen3_vl.modeling_qwen3_vl import (
+            Qwen3VLForConditionalGeneration as _ModelClass,
+        )
 
         self.model_name = model_name
         self.device = device
@@ -196,7 +187,7 @@ class RecentWindowQAModel:
     def _get_multimodal_model(self):
         multimodal_model = getattr(self.model, "model", None)
         if multimodal_model is None:
-            raise TypeError("Expected a Qwen2.5-VL style multimodal model.")
+            raise TypeError("Expected a Qwen3-VL multimodal model.")
         return multimodal_model
 
     def _infer_module_device(self, module: Any) -> torch.device:

@@ -5,6 +5,9 @@ __pycache__/
 docs/
 efficiency/
 tests/
+requirements-qwen25.txt
+main_experiments/eval_qwen25vl_ovo.py
+lib/recent_window_eval_qwen25.py
 
 # Local datasets and generated artifacts
 data/
