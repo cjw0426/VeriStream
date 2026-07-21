@@ -18,6 +18,8 @@ implemented locally; no video-agent framework is required.
 The design, failure analysis, results, and reproduction settings are summarized below so the code
 repository remains self-contained.
 
+The paper-style experiment report is available at [实验报告.md](实验报告.md).
+
 ## Project basis and acknowledgements
 
 This project is developed on top of the [SimpleStream](https://github.com/EvolvingLMMs-Lab/SimpleStream)
