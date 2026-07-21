@@ -179,21 +179,22 @@ configuration. Keep the same `--result-dir` to resume from rank checkpoints.
 
 ## Recorded OVO-Bench results
 
-All values below are percentages from the same OVO-Bench split scoring protocol. `Total` is the
-arithmetic mean of the three split averages; the text-only dual-role ablation has no Forward run and
-therefore uses a two-split mean marked with `*`.
+All values below are percentages from the same OVO-Bench scoring protocol. This compact table reports
+only Backward and Realtime, matching the two-split VeriStream comparison. `Total` is always their
+arithmetic mean: `(Backward + Realtime) / 2`. Forward is evaluated by the separate entry point but is
+not included in this table or in `Total`.
 
-| Model / method | Backward | Realtime | Forward | Total |
-| --- | ---: | ---: | ---: | ---: |
-| Qwen3-VL-2B Recent4 | 53.56 | 74.23 | 42.67 | 56.82 |
-| Qwen3-VL-2B Recent4 + CLIP-TopK16 | 52.73 | 69.52 | 43.12 | 55.13 |
-| Qwen3-VL-2B action-fact memory + Uniform16 | 56.91 | 73.68 | 38.84 | 56.48 |
-| Qwen3-VL-8B Recent4 | 53.92 | 81.47 | 39.40 | 58.26 |
-| Qwen3-VL-8B Recent16 | 55.06 | 77.80 | 43.94 | 58.93 |
-| Qwen3-VL-8B Recent32 | 57.35 | 76.57 | 46.08 | 60.00 |
-| Qwen3-VL-8B action-fact memory + Uniform16 | 62.09 | 79.65 | 39.04 | 60.26 |
-| VeriStream text-only | 55.05 | 44.91 | -- | 49.98* |
-| VeriStream Hybrid-4 | 57.60 | 79.18 | 39.07 | 58.62 |
+| Model / method | Backward | Realtime | Total (B/R mean) |
+| --- | ---: | ---: | ---: |
+| Qwen3-VL-2B Recent4 | 53.56 | 74.23 | 63.90 |
+| Qwen3-VL-2B Recent4 + CLIP-TopK16 | 52.73 | 69.52 | 61.13 |
+| Qwen3-VL-2B action-fact memory + Uniform16 | 56.91 | 73.68 | 65.30 |
+| Qwen3-VL-8B Recent4 | 53.92 | 81.47 | 67.70 |
+| Qwen3-VL-8B Recent16 | 55.06 | 77.80 | 66.43 |
+| Qwen3-VL-8B Recent32 | 57.35 | 76.57 | 66.96 |
+| Qwen3-VL-8B action-fact memory + Uniform16 | 62.09 | 79.65 | 70.87 |
+| VeriStream text-only | 55.05 | 44.91 | 49.98 |
+| VeriStream Hybrid-4 | 57.60 | 79.18 | 68.39 |
 
 The main finding is a memory-perception trade-off: larger raw windows improve some historical or
 forward questions but reduce real-time focus. Text memory improves historical recall on 8B while
