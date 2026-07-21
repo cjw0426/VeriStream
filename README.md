@@ -191,6 +191,7 @@ not included in this table or in `Total`.
 | Qwen3-VL-8B action-fact memory + Uniform16 | 62.09 | 79.65 | 70.87 |
 | VeriStream text-only | 55.05 | 44.91 | 49.98 |
 | VeriStream Hybrid-4 | 57.60 | 79.18 | 68.39 |
+| VeriStream Hybrid-16 | 58.35 | 78.30 | 68.32 |
 
 The main finding is a memory-perception trade-off: larger raw windows improve some historical or
 forward questions but reduce real-time focus. Text memory improves historical recall on 8B while
