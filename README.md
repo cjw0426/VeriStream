@@ -32,14 +32,70 @@ conda activate simplestream-qwen3
 pip install -r requirements-qwen3.txt
 ```
 
-The repository does not include model weights or datasets. Put OVO-Bench files at:
+The repository does not include model weights or datasets. Install the Hugging Face CLI for dataset downloads:
+
+```bash
+pip install -U huggingface_hub
+```
+
+### OVO-Bench
+
+Download the official annotation file and the pre-chunked videos. The video archive is split into
+15 parts and is approximately 144 GB in total.
 
 ```text
 data/ovo_bench/ovo_bench_new.json
 data/ovo_bench/chunked_videos/
 ```
 
-StreamingBench paths are documented in [复现指南](docs/veristream/复现指南.md).
+```bash
+mkdir -p data/ovo_bench
+curl -L https://raw.githubusercontent.com/JoeLeelyf/OVO-Bench/main/data/ovo_bench_new.json \
+  -o data/ovo_bench/ovo_bench_new.json
+
+for part in aa ab ac ad ae af ag ah ai aj ak al am an ao; do
+  hf download JoeLeelyf/OVO-Bench \
+    "chunked_videos.tar.part${part}" \
+    --repo-type dataset --local-dir data/ovo_bench
+done
+
+cat data/ovo_bench/chunked_videos.tar.part{aa,ab,ac,ad,ae,af,ag,ah,ai,aj,ak,al,am,an,ao} \
+  > data/ovo_bench/chunked_videos.tar
+tar -xf data/ovo_bench/chunked_videos.tar -C data/ovo_bench
+rm data/ovo_bench/chunked_videos.tar data/ovo_bench/chunked_videos.tar.part*
+```
+
+### StreamingBench
+
+The official release is hosted at `mjuicem/StreamingBench`. Download all archives, then unpack
+them into the official category directories:
+
+```bash
+mkdir -p data/streamingbench/raw
+hf download mjuicem/StreamingBench \
+  --repo-type dataset --local-dir data/streamingbench/raw
+
+mkdir -p data/streamingbench/{real,omni,sqa,proactive}
+for archive in data/streamingbench/raw/Real-Time\ Visual\ Understanding_*.zip; do
+  unzip -q "$archive" -d data/streamingbench/real
+done
+for archive in data/streamingbench/raw/Proactive\ Output_*.zip; do
+  unzip -q "$archive" -d data/streamingbench/proactive
+done
+for archive in data/streamingbench/raw/Sequential\ Question\ Answering_*.zip; do
+  unzip -q "$archive" -d data/streamingbench/sqa
+done
+for archive in data/streamingbench/raw/*.zip; do
+  case "$archive" in
+    *"Real-Time Visual Understanding"*|*"Proactive Output"*|*"Sequential Question Answering"*) ;;
+    *) unzip -q "$archive" -d data/streamingbench/omni ;;
+  esac
+done
+```
+
+The official CSV files and preprocessing details are maintained at
+`https://github.com/THUNLP-MT/StreamingBench`. The evaluator in this repository expects the
+preprocessed `questions_real.json` and flat `videos/` directory.
 
 ## Tests
 
@@ -61,6 +117,31 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes=4 \
   --result_dir main_experiments/results/ovo_qwen3vl_recent4 \
   --frame_selection recent --recent_frames_only 4 \
   --chunk_duration 1.0 --fps 1.0 --max_qa_tokens 256
+```
+
+The same entry point reproduces the SimpleStream frame and text-memory baselines by changing only
+`--frame_selection` and the frame budget:
+
+| Experiment | Arguments |
+| --- | --- |
+| Recent4/16/32 | `--frame_selection recent --recent_frames_only 4/16/32` |
+| Uniform16/32 | `--frame_selection uniform --recent_frames_only 16/32` |
+| CLIP-TopK16/32 | `--frame_selection clip_topk --recent_frames_only 16/32 --clip_model_path openai/clip-vit-large-patch14` |
+| Recent4 + Uniform16 | `--frame_selection recent_uniform --recent_frames_only 4 --supplemental_frames 16` |
+| Recent4 + CLIP-TopK16 | `--frame_selection recent_clip_topk --recent_frames_only 4 --supplemental_frames 16 --clip_model_path openai/clip-vit-large-patch14` |
+| Action-fact + Uniform16 | `--frame_selection recent_memory_uniform --recent_frames_only 4 --supplemental_frames 16` |
+| Action-fact + CLIP-TopK16 | `--frame_selection recent_memory_clip_topk --recent_frames_only 4 --supplemental_frames 16 --clip_model_path openai/clip-vit-large-patch14` |
+| State-aware + Uniform16 | `--frame_selection recent_state_memory_uniform_v4 --recent_frames_only 4 --supplemental_frames 16` |
+| State-aware + CLIP-TopK16 | `--frame_selection recent_state_memory_clip_topk_v4 --recent_frames_only 4 --supplemental_frames 16 --clip_model_path openai/clip-vit-large-patch14` |
+| Recent4 + Uniform28 | `--frame_selection recent_uniform --recent_frames_only 4 --supplemental_frames 28` |
+| Recent4 + CLIP-TopK28 | `--frame_selection recent_clip_topk --recent_frames_only 4 --supplemental_frames 28 --clip_model_path openai/clip-vit-large-patch14` |
+
+Append these shared arguments to every baseline command:
+
+```bash
+--anno_path data/ovo_bench/ovo_bench_new.json \
+--chunked_dir data/ovo_bench/chunked_videos \
+--chunk_duration 1.0 --fps 1.0 --max_qa_tokens 256
 ```
 
 ## VeriStream Hybrid-4
