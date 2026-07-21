@@ -1,0 +1,98 @@
+Use case: scientific-educational
+Asset type: full-width publication-quality method overview figure for a NeurIPS/ICLR/ICML machine-learning paper
+
+Primary request:
+Design a visually rich but rigorous academic overview figure for “VeriStream: Causal Evidence Memory with Decoupled Perception and Reasoning”. Show a long-video understanding agent as a causal evidence system, not as a generic flowchart. The figure should combine a video timeline, evidence cards, a layered memory hierarchy, a query-time controller, visual tool loops, and a verification state transition. It must remain interpretable in grayscale and readable when reduced to a single-column paper figure.
+
+Overall art direction:
+- Style: illustrated technical infographic fused with classic academic paper graphics.
+- Use a white paper background with three softly tinted horizontal panels, subtle hairline separators, and generous whitespace.
+- Use a restrained but expressive color system: colored panel headers, color-coded memory cards, small status badges, and source-colored connectors.
+- Add visual depth through nested cards, thin inset borders, timeline ticks, frame-thumbnail strips, node-link motifs, and small magnifier/loop glyphs drawn as simple line art. These are explanatory data glyphs, not decorative clip-art.
+- Use flat vector geometry, no photorealism, no 3D perspective, no gradients, no drop shadows stronger than a barely visible 1 px elevation.
+- Typography: Inter, Helvetica Neue, or Source Sans 3; semibold section headers, medium module names, regular metadata. Use sentence case, generous line spacing, and mathematically aligned baselines.
+- Use 1.5 px primary strokes, 1 px secondary strokes, rounded 10 px modules, and clean filled triangular arrowheads.
+
+Canvas and layout:
+- Wide landscape 16:9 canvas, approximately 1800 x 1050 px, with 7% outer margins.
+- Three stacked horizontal panels with distinct identities:
+  TOP: causal perception and evidence construction.
+  CENTER: query-time memory retrieval and agentic tools.
+  BOTTOM: verification gate, uncertainty handling, and answer.
+- Make the center panel slightly taller than the other two; it is the visual focal area.
+- Use a left-to-right narrative inside each panel, but allow feedback loops to arc upward or downward around modules without crossing text.
+- Keep all modules aligned to a shared invisible grid. No overlapping labels, arrows, or cards.
+
+TOP PANEL — causal perception and evidence construction:
+- At far left, draw a compact filmstrip of 5-6 varied video-frame thumbnails with a thin time ruler underneath. Put the exact label “Video V + question q” below the filmstrip.
+- Draw a vertical causal cutoff marker through the timeline, with a blue lock-like line-art glyph. Put the exact label “Causal clipper: t <= t_q” beside the marker.
+- Next, show a teal perception module with a small eye-and-frame line-art glyph and the exact label “Perception role: frozen Qwen3-VL”.
+- From the perception module, show three small amber evidence cards flowing into a layered memory vault. The cards should visibly contain short abstract text lines but no extra readable words.
+- Make the memory vault the visual centerpiece of the top panel: a stacked, slightly offset set of four cards with amber/blue/teal edge accents, not a single plain box. Label the four cards exactly and only as:
+  “L0 raw evidence pointers”
+  “L1 observation memory”
+  “L2 event memory”
+  “L3 question working set”
+- Use small timestamp dots and pointer pins inside the L0 card to visually communicate reversibility to raw video frames.
+
+CENTER PANEL — query-time retrieval and tools:
+- Show “L3 question working set” visually connected to a blue reasoning module on the right. The reasoning module should have a compact controller diagram: a central blue node with four small orbiting action nodes, conveying adaptive planning rather than a static pipeline.
+- Label the module exactly “Reasoning role: frozen Qwen3-VL”.
+- Around the reasoning module, arrange four tool cards in a balanced 2 x 2 cluster with vermillion accents and small line-art glyphs (magnifier, crop window, check mark, timeline comparison). Labels must be exactly:
+  “search_memory”
+  “inspect_segment”
+  “verify_evidence”
+  “compare_segments”
+- Show search_memory as a blue-to-amber retrieval arc entering L3.
+- Show inspect_segment and verify_evidence as thick vermillion dashed feedback arcs that return to both the L0 pointer card and the teal perception module in the top panel.
+- Show compare_segments as a split timeline glyph that feeds the bottom verification gate.
+- Add a tiny “K-step” visual motif using four unlabelled blue dots connected along the reasoning controller path, but do not add any text beyond the required labels.
+
+BOTTOM PANEL — verification gate and answer:
+- Place a large amber gate card in the center with two visually distinct lanes. The positive lane has a green-teal check glyph and the exact label “candidate -> verified”. The negative lane has a vermillion warning glyph and the exact label “conflict -> quarantined”.
+- Use a visible evidence-card transformation: a pale amber candidate card enters the gate, then becomes a saturated teal-edged verified card on the positive lane; a red-edged card moves to a quarantined side pocket on the negative lane. Do not add any words inside these cards.
+- Route only the verified lane to a far-right slate output card with the exact label “Final answer”. Give this output card a subtle blue outline to show that reasoning consumes verified evidence.
+- The quarantined lane must visibly terminate away from the answer path, while retaining a thin dashed return pointer toward L0 for audit/re-observation.
+
+Connector semantics and legend:
+- Solid arrows = data flow or state transition.
+- Dashed arrows = tool-triggered feedback to perception and raw evidence.
+- Use source-colored solid arrows: slate for input, teal for perception, amber for memory, deep blue for reasoning, vermillion for tools and conflict.
+- Draw arrowheads outside module borders; never run arrows through text.
+- Include a compact legend in the lower-left margin with exactly two entries: one solid arrow and one dashed arrow, labelled “data flow” and “tool-triggered feedback”.
+
+Color palette, optimized for print and color-blind safety:
+- Deep reasoning blue #3478C8, pale blue #EAF2FB.
+- Perception teal #208F83, pale teal #E7F5F2.
+- Memory amber #D39B35, pale amber #FBF3DF.
+- Tool vermillion #D55E00, pale vermillion #FCEBE3.
+- Verified teal-green #3A9D72, conflict red-orange #C94C3B.
+- Slate #6E7C8A, pale slate #F2F5F7, text charcoal #24313A.
+- Use color accents on edges and headers rather than flooding the canvas with saturated fills.
+
+Exact in-figure text; preserve spelling, capitalization, symbols, and punctuation exactly:
+- “Video V + question q”
+- “Causal clipper: t <= t_q”
+- “Perception role: frozen Qwen3-VL”
+- “L0 raw evidence pointers”
+- “L1 observation memory”
+- “L2 event memory”
+- “L3 question working set”
+- “Reasoning role: frozen Qwen3-VL”
+- “search_memory”
+- “inspect_segment”
+- “verify_evidence”
+- “compare_segments”
+- “candidate -> verified”
+- “conflict -> quarantined”
+- “Final answer”
+
+Strict negative constraints:
+- No generic box-and-arrow-only composition; use the requested timeline, frame strip, nested evidence cards, state badges, and controller-node motif.
+- No people, faces, stock imagery, logos, watermarks, equations, decorative title, subtitle, captions, or invented readable text.
+- Do not paraphrase, translate, abbreviate, duplicate, or autocorrect any exact label.
+- No gradients, neon colors, purple dominance, glossy 3D effects, perspective distortion, or photorealistic video frames.
+- Do not use emoji or unrelated icons. Line-art glyphs must be tiny, monochrome, and directly encode video, memory, search, inspection, verification, or comparison.
+- Do not let feedback loops cross the memory labels or obscure the causal cutoff.
+- Preserve a clear visual distinction between candidate, verified, and quarantined evidence.
+- The final result must look like a polished top-conference method overview figure, not a product UI, business process chart, or classroom cartoon.
