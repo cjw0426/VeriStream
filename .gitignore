@@ -2,9 +2,17 @@ __pycache__/
 *.pyc
 *.pyo
 .claude/
-docs/
+docs/*
+!docs/veristream/
+docs/veristream/*
+!docs/veristream/gpt_image2_method_figure_prompt.md
 efficiency/
 tests/
+!tests/
+tests/*
+!tests/test_veristream_budgeted.py
+!tests/test_transition_audit.py
+main_experiments/eval_streamingbench.py
 requirements-qwen25.txt
 main_experiments/eval_qwen25vl_ovo.py
 lib/recent_window_eval_qwen25.py
@@ -17,6 +25,7 @@ efficiency/result/
 efficiency/video/
 
 # Logs and temporary run state
+logs/
 *.log
 logs_*.out
 *.jsonl

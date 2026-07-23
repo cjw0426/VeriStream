@@ -1,72 +1,79 @@
-# VeriStream
+# SimpleStream
 
-Training-free long-video understanding with causal evidence memory and decoupled perception/reasoning.
+SimpleStream is a training-free long-video understanding agent built on frozen Qwen3-VL models. The
+main method, **VeriStream**, organizes a causal video prefix as persistent evidence memory and lets a
+bounded LLM controller decide whether to search, inspect, expand, compare, or stop. The repository
+evaluates OVO-Bench **Backward** and **Realtime** tasks; Forward is outside the primary experiment.
 
-VeriStream uses frozen Qwen3-VL models. A perception role builds timestamped evidence cards, a
-reasoning role retrieves and verifies historical evidence, and the final answer combines verified
-memory with the causal recent visual window. The orchestration, memory state machine, and tools are
-implemented locally; no video-agent framework is required.
+The publication figure should be generated with the reviewed
+[GPT Image 2 method prompt](docs/veristream/gpt_image2_method_figure_prompt.md) and saved as
+`figures/veristream_method.png` after visual inspection. The prompt includes a correction pass and a
+logical-consistency checklist; no generated placeholder figure is committed.
 
-## Method
+## Method At A Glance
 
-- Causal access: only frames before the question timestamp are exposed.
-- Hierarchical memory: raw frame pointers, observations, events, and a question working set.
-- Tools: `search_memory`, `inspect_segment`, `verify_evidence`, and `compare_segments`.
-- Hybrid-4: verified historical evidence plus four recent raw frames.
-- Training-free: model weights are frozen and no fine-tuning is used.
+```text
+offline per-video indexing
+  L0 raw frames + timestamps + CLIP embeddings
+    -> temporal coverage + multi-span change proposals
+    -> frozen-VLM semantic assessment
+    -> L1 OverviewMemory / admitted TransitionMemory with L0 provenance
 
-The design, failure analysis, results, and reproduction settings are summarized below so the code
-repository remains self-contained.
+question time
+  question -> atomic EvidenceNeeds -> LLM tool controller
+    -> Search L1 / Expand graph / Inspect L0 / Compare nodes
+    -> reassess evidence sufficiency until Finish or a hard budget
+    -> grounded Working Evidence + exact Recent4 -> final answer
+```
 
-The paper-style experiment report is available at [实验报告.md](实验报告.md).
+The model autonomously selects the next tool and stopping point. A deterministic executor validates
+memory IDs, causal boundaries, per-tool budgets, and output schemas; it does not choose the tool for the
+model. `--controller-mode deterministic` is retained only as a controller ablation.
 
-## Project basis and acknowledgements
+Memory is isolated by video ID:
 
-This project is developed on top of the [SimpleStream](https://github.com/EvolvingLMMs-Lab/SimpleStream)
-recent-window baseline. We thank the SimpleStream authors for the baseline implementation and OVO-Bench
-evaluation pipeline. We also thank the Qwen-VL, OVO-Bench, and StreamingBench authors for releasing the
-models and benchmarks used here.
+- **L0** stores raw frames, timestamps, and CLIP embeddings.
+- **L1** stores query-independent block overviews and semantically admitted transitions with L0 links.
+- **Working Evidence** is question-local, records retrieval/verification state, and is cleared after the answer.
 
-## Method summary
+CLIP change pairs are proposals, not facts. Only a frozen Qwen3-VL assessment classified as a local
+object action or state change may enter searchable TransitionMemory. Scene cuts and camera motion remain
+navigation metadata; rejected candidates remain auditable but are not retrieved as evidence.
 
-For each causal video prefix, the perception role builds a question-independent evidence index. Each
-observation keeps its time interval and raw chunk pointers. The reasoning role retrieves candidate
-observations with `search_memory`, requests local visual evidence with `inspect_segment`, and promotes
-only supported candidates through `verify_evidence`; conflicting candidates are quarantined. The final
-Hybrid-4 answer receives verified historical memory plus the four most recent raw frames. This preserves
-long-range evidence without removing the current visual state. `lib/veristream.py` contains the shared
-memory status model and the single-role StreamingBench compatibility path; `lib/veristream_dual_role.py`
-contains the current evidence index and dual-role controller.
+## Project Basis
+
+This project extends the [SimpleStream](https://github.com/EvolvingLMMs-Lab/SimpleStream) recent-window
+baseline and keeps its OVO-Bench evaluation conventions. We thank the SimpleStream, Qwen-VL, OVO-Bench,
+CLIP, and BGE authors for releasing the code, models, and data used in this training-free study. Their
+licenses apply to the corresponding upstream assets.
 
 ## Installation
-
-Install PyTorch and torchvision for your CUDA runtime first, then install the Qwen3-VL stack:
 
 ```bash
 conda create -n simplestream-qwen3 python=3.10 -y
 conda activate simplestream-qwen3
+pip install -r requirements.txt
 pip install -r requirements-qwen3.txt
 ```
 
-The repository does not include model weights or datasets. Install the Hugging Face CLI for dataset downloads:
+The main run requires one Qwen3-VL checkpoint, CLIP ViT-L/14, BGE-base-en-v1.5, `accelerate`, and eight
+CUDA devices. Passing separate perception and reasoning paths loads two Qwen instances per GPU; add
+`--share-model` when memory is insufficient.
+
+## OVO-Bench Data
+
+Use the current annotation from the official [OVO-Bench repository](https://github.com/JoeLeelyf/OVO-Bench)
+and the pre-chunked videos from the official
+[Hugging Face dataset](https://huggingface.co/datasets/JoeLeelyf/OVO-Bench). The local annotation has
+1,640 entries and expands to 3,035 video-question instances. Our primary split contains 631 Backward and
+837 Realtime questions (1,468 total) across nine task types.
 
 ```bash
-pip install -U huggingface_hub
-```
-
-### OVO-Bench
-
-Download the official annotation file and the pre-chunked videos. The video archive is split into
-15 parts and is approximately 144 GB in total.
-
-```text
-data/ovo_bench/ovo_bench_new.json
-data/ovo_bench/chunked_videos/
-```
-
-```bash
+pip install -U huggingface_hub hf_xet
 mkdir -p data/ovo_bench
-curl -L https://raw.githubusercontent.com/JoeLeelyf/OVO-Bench/main/data/ovo_bench_new.json \
+
+curl -fL \
+  https://raw.githubusercontent.com/JoeLeelyf/OVO-Bench/main/data/ovo_bench_new.json \
   -o data/ovo_bench/ovo_bench_new.json
 
 for part in aa ab ac ad ae af ag ah ai aj ak al am an ao; do
@@ -76,143 +83,140 @@ for part in aa ab ac ad ae af ag ah ai aj ak al am an ao; do
 done
 
 cat data/ovo_bench/chunked_videos.tar.part{aa,ab,ac,ad,ae,af,ag,ah,ai,aj,ak,al,am,an,ao} \
-  > data/ovo_bench/chunked_videos.tar
-tar -xf data/ovo_bench/chunked_videos.tar -C data/ovo_bench
-rm data/ovo_bench/chunked_videos.tar data/ovo_bench/chunked_videos.tar.part*
+  | tar -xf - -C data/ovo_bench
 ```
 
-### StreamingBench
-
-The official release is hosted at `mjuicem/StreamingBench`. Download all archives, then unpack
-them into the official category directories:
-
-```bash
-mkdir -p data/streamingbench/raw
-hf download mjuicem/StreamingBench \
-  --repo-type dataset --local-dir data/streamingbench/raw
-
-mkdir -p data/streamingbench/{real,omni,sqa,proactive}
-for archive in data/streamingbench/raw/Real-Time\ Visual\ Understanding_*.zip; do
-  unzip -q "$archive" -d data/streamingbench/real
-done
-for archive in data/streamingbench/raw/Proactive\ Output_*.zip; do
-  unzip -q "$archive" -d data/streamingbench/proactive
-done
-for archive in data/streamingbench/raw/Sequential\ Question\ Answering_*.zip; do
-  unzip -q "$archive" -d data/streamingbench/sqa
-done
-for archive in data/streamingbench/raw/*.zip; do
-  case "$archive" in
-    *"Real-Time Visual Understanding"*|*"Proactive Output"*|*"Sequential Question Answering"*) ;;
-    *) unzip -q "$archive" -d data/streamingbench/omni ;;
-  esac
-done
-```
-
-The official CSV files and preprocessing details are maintained at
-`https://github.com/THUNLP-MT/StreamingBench`. The evaluator in this repository expects the
-preprocessed `questions_real.json` and flat `videos/` directory.
-
-## OVO-Bench baseline
-
-The baseline evaluates Backward, Realtime, and Forward with a frozen Qwen3-VL model:
-
-```bash
-NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
-CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes=4 \
-  main_experiments/eval_qwen3vl_ovo.py \
-  --model_path /path/to/Qwen3-VL-8B-Instruct \
-  --anno_path data/ovo_bench/ovo_bench_new.json \
-  --chunked_dir data/ovo_bench/chunked_videos \
-  --result_dir main_experiments/results/ovo_qwen3vl_recent4 \
-  --frame_selection recent --recent_frames_only 4 \
-  --chunk_duration 1.0 --fps 1.0 --max_qa_tokens 256
-```
-
-The same entry point reproduces the SimpleStream frame and text-memory baselines by changing only
-`--frame_selection` and the frame budget:
-
-| Experiment | Arguments |
-| --- | --- |
-| Recent4/16/32 | `--frame_selection recent --recent_frames_only 4/16/32` |
-| Uniform16/32 | `--frame_selection uniform --recent_frames_only 16/32` |
-| CLIP-TopK16/32 | `--frame_selection clip_topk --recent_frames_only 16/32 --clip_model_path openai/clip-vit-large-patch14` |
-| Recent4 + Uniform16 | `--frame_selection recent_uniform --recent_frames_only 4 --supplemental_frames 16` |
-| Recent4 + CLIP-TopK16 | `--frame_selection recent_clip_topk --recent_frames_only 4 --supplemental_frames 16 --clip_model_path openai/clip-vit-large-patch14` |
-| Action-fact + Uniform16 | `--frame_selection recent_memory_uniform --recent_frames_only 4 --supplemental_frames 16` |
-| Action-fact + CLIP-TopK16 | `--frame_selection recent_memory_clip_topk --recent_frames_only 4 --supplemental_frames 16 --clip_model_path openai/clip-vit-large-patch14` |
-| State-aware + Uniform16 | `--frame_selection recent_state_memory_uniform_v4 --recent_frames_only 4 --supplemental_frames 16` |
-| State-aware + CLIP-TopK16 | `--frame_selection recent_state_memory_clip_topk_v4 --recent_frames_only 4 --supplemental_frames 16 --clip_model_path openai/clip-vit-large-patch14` |
-| Recent4 + Uniform28 | `--frame_selection recent_uniform --recent_frames_only 4 --supplemental_frames 28` |
-| Recent4 + CLIP-TopK28 | `--frame_selection recent_clip_topk --recent_frames_only 4 --supplemental_frames 28 --clip_model_path openai/clip-vit-large-patch14` |
-
-Append these shared arguments to every baseline command:
-
-```bash
---anno_path data/ovo_bench/ovo_bench_new.json \
---chunked_dir data/ovo_bench/chunked_videos \
---chunk_duration 1.0 --fps 1.0 --max_qa_tokens 256
-```
-
-## VeriStream Hybrid-4
-
-Backward and Realtime use the dual-role entry point:
-
-```bash
-NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
-CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes=4 \
-  main_experiments/eval_qwen3vl_ovo_dual_role.py \
-  --perception-model-path /path/to/Qwen3-VL-8B-Instruct \
-  --reasoning-model-path /path/to/Qwen3-VL-8B-Instruct \
-  --result-dir main_experiments/results/veristream_dual_role_hybrid4_br_rt \
-  --chunk-duration 1.0 --fps 1.0 --coarse-stride 12 \
-  --max-frames-per-observation 8 --max-actions 4 \
-  --max-qa-tokens 256 --final-recent-frames 4
-```
-
-Forward uses `main_experiments/eval_qwen3vl_ovo_dual_role_forward.py` with the same model and
-configuration. Keep the same `--result-dir` to resume from rank checkpoints.
-
-## Recorded OVO-Bench results
-
-All values below are percentages from the same OVO-Bench scoring protocol. This compact table reports
-only Backward and Realtime, matching the two-split VeriStream comparison. `Total` is always their
-arithmetic mean: `(Backward + Realtime) / 2`. Forward is evaluated by the separate entry point but is
-not included in this table or in `Total`.
-
-| Model / method | Backward | Realtime | Total (B/R mean) |
-| --- | ---: | ---: | ---: |
-| Qwen3-VL-2B Recent4 | 53.56 | 74.23 | 63.90 |
-| Qwen3-VL-2B Recent4 + CLIP-TopK16 | 52.73 | 69.52 | 61.13 |
-| Qwen3-VL-2B action-fact memory + Uniform16 | 56.91 | 73.68 | 65.30 |
-| Qwen3-VL-8B Recent4 | 53.92 | 81.47 | 67.70 |
-| Qwen3-VL-8B Recent16 | 55.06 | 77.80 | 66.43 |
-| Qwen3-VL-8B Recent32 | 57.35 | 76.57 | 66.96 |
-| Qwen3-VL-8B action-fact memory + Uniform16 | 62.09 | 79.65 | 70.87 |
-| VeriStream text-only | 55.05 | 44.91 | 49.98 |
-| VeriStream Hybrid-4 | 57.60 | 79.18 | 68.39 |
-| VeriStream Hybrid-16 | 58.35 | 78.30 | 68.32 |
-
-The main finding is a memory-perception trade-off: larger raw windows improve some historical or
-forward questions but reduce real-time focus. Text memory improves historical recall on 8B while
-preserving recent frames. Hybrid-4 restores real-time perception over text-only dual-role inference
-by supplying raw recent vision, while retaining verified historical evidence.
-
-## Code layout
+Expected layout:
 
 ```text
-lib/veristream.py                         # single-role memory and tool state machine
-lib/veristream_dual_role.py               # evidence index and dual-role orchestration
-lib/clip_topk_selector.py                 # CLIP semantic frame selection
-lib/recent_window_eval_qwen3.py           # Qwen3-VL decoding and evaluation helpers
-main_experiments/eval_qwen3vl_ovo.py      # recent/uniform/CLIP/text-memory baseline
-main_experiments/eval_qwen3vl_ovo_dual_role.py
-main_experiments/eval_qwen3vl_ovo_dual_role_forward.py
-scoring/score_ovo_bench.py
+data/ovo_bench/
+|- ovo_bench_new.json
+`- chunked_videos/
+   |- 0.mp4
+   |- 1.mp4
+   `- ...
 ```
 
-## License and data
+Validate every Backward/Realtime input before launching:
 
-Please follow the licenses of Qwen3-VL, OVO-Bench, StreamingBench, and all upstream dependencies.
-Datasets, videos, model weights, logs, and generated result files are intentionally excluded from
-this repository.
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+from ovo_constants import BACKWARD_TASKS, REAL_TIME_TASKS
+
+rows = json.loads(Path("data/ovo_bench/ovo_bench_new.json").read_text())
+tasks = set(BACKWARD_TASKS + REAL_TIME_TASKS)
+selected = [row for row in rows if row["task"] in tasks]
+missing = [row["id"] for row in selected
+           if not Path(f"data/ovo_bench/chunked_videos/{row['id']}.mp4").is_file()]
+print(f"Backward/Realtime questions: {len(selected)}")
+print(f"missing videos: {len(missing)}")
+if missing:
+    raise SystemExit(f"first missing IDs: {missing[:20]}")
+PY
+```
+
+OVO-Bench data is not redistributed here. Follow its official license and the licenses of source videos.
+
+## Required Uniform Baseline
+
+The required baseline uses the same Qwen3-VL-8B checkpoint, 32 frames uniformly sampled from the causal
+prefix, and one direct QA call. It evaluates only Backward and Realtime:
+
+```bash
+nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
+  DECORD_EOF_RETRY_MAX=20480 QWEN_EXACT_RECENT_DECODE=1 \
+  CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+  accelerate launch --num_processes=8 --main_process_port=29730 \
+    main_experiments/eval_qwen3vl_ovo.py \
+    --model_path /data1/chenjunwei/models/Qwen3-VL-8B-Instruct \
+    --anno_path data/ovo_bench/ovo_bench_new.json \
+    --chunked_dir data/ovo_bench/chunked_videos \
+    --result_dir main_experiments/results/ovo_qwen3vl_8b_uniform32_br_rt \
+    --frame_selection uniform --recent_frames_only 32 \
+    --chunk_duration 1.0 --fps 1.0 --max_qa_tokens 256 \
+    --eval_splits backward,realtime \
+  > logs/ovo_qwen3vl_8b_uniform32_br_rt.out 2>&1 &
+```
+
+## VeriStream Evaluation
+
+The following is the primary autonomous-agent run. Omit `--share-model` to load independent perception
+and reasoning instances on each GPU. The latest semantic index uses schema 6 and must not reuse an older
+cache.
+
+```bash
+nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
+  DECORD_EOF_RETRY_MAX=20480 \
+  CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+  accelerate launch --num_processes=8 --main_process_port=29731 \
+    main_experiments/eval_qwen3vl_ovo_budgeted.py \
+    --perception-model-path /data1/chenjunwei/models/Qwen3-VL-8B-Instruct \
+    --reasoning-model-path /data1/chenjunwei/models/Qwen3-VL-8B-Instruct \
+    --anno-path data/ovo_bench/ovo_bench_new.json \
+    --chunked-dir data/ovo_bench/chunked_videos \
+    --result-dir main_experiments/results/veristream_8b_agent_br_rt \
+    --chunk-duration 1.0 --fps 1.0 --recent-frames 4 \
+    --history-block-seconds 12 --coverage-frames-per-block 4 \
+    --change-peaks-per-block 2 --max-index-frames-per-block 8 \
+    --minimum-peak-distance 2.0 --change-spans 1,2,4 \
+    --minimum-change-distance 0.05 --change-mad-scale 0.5 \
+    --max-index-tokens 2048 --max-qa-tokens 0 \
+    --controller-mode llm --visual-verification-policy deterministic \
+    --current-lane-decoder exact --current-fast-path-confidence 0.7 \
+    --max-tool-actions 4 --max-search-rounds 2 \
+    --max-navigation-steps 2 --max-visual-actions 2 \
+    --max-history-visual-frames 8 \
+    --candidate-metadata-tokens 768 --history-context-tokens 768 \
+    --minimum-semantic-similarity 0.25 \
+    --minimum-visual-similarity 0.20 --minimum-bm25-score 0.10 \
+    --clip-model openai/clip-vit-large-patch14 \
+    --text-embedding-model BAAI/bge-base-en-v1.5 \
+  > logs/veristream_8b_agent_br_rt.out 2>&1 &
+```
+
+`finish_retrieval` is free; the four-action limit applies only to executed Search/Inspect/Expand/Compare
+calls. It prevents a malformed controller loop from making evaluation unbounded and defines a measurable
+accuracy-cost frontier. Each result stores the full tool trace and stop reason.
+
+Restarting the same command resumes completed rows and compatible schema-6 cache entries. To reuse a
+completed index in a new question-time ablation, pass `--index-cache-dir OLD_RESULT_DIR/memory`; the source
+is read-only. Change the result directory or pass `--rebuild-memory` only when rebuilding intentionally.
+
+## Scoring And Analysis
+
+The evaluator writes `budgeted_ovo_backward_realtime.json` plus task averages and diagnostics. In this
+project, `Total = (Backward + Realtime) / 2`; Forward is not included.
+
+```bash
+python main_experiments/compare_budgeted_results.py --help
+python main_experiments/eval_veristream_planner_routing.py --help
+python main_experiments/export_transition_audit.py --help
+python main_experiments/score_transition_audit.py --help
+```
+
+These scripts are offline analysis tools, not runtime dependencies. Removing them does not change an
+eight-GPU evaluation, but it removes paired significance testing, routing calibration, and semantic-gate
+audit support.
+
+## Verification
+
+```bash
+python -m unittest discover -s tests -q
+python -m py_compile lib/veristream_budgeted.py \
+  main_experiments/eval_qwen3vl_ovo_budgeted.py
+```
+
+See [`实验报告.md`](实验报告.md) for the motivation, method, results, ablations, and limitations.
+
+## Core Files
+
+```text
+lib/veristream_budgeted.py                    VeriStream index, retrieval, tools, and agent
+lib/qwen_exact_recent_decoder.py              exact Recent4 current decoder
+main_experiments/eval_qwen3vl_ovo.py          uniform/direct baselines
+main_experiments/eval_qwen3vl_ovo_budgeted.py OVO Backward/Realtime agent evaluation
+docs/veristream/gpt_image2_method_figure_prompt.md
+tests/test_veristream_budgeted.py              logic and regression tests
+```

@@ -39,6 +39,65 @@ class _TTFTStreamer:
         pass
 
 
+class _CompleteJsonStoppingCriteria:
+    def __init__(self, tokenizer: Any, prompt_length: int, initial_text: str = "") -> None:
+        self.tokenizer = tokenizer
+        self.prompt_length = max(0, int(prompt_length))
+        self.initial_text = str(initial_text)
+        self.matched = False
+
+    def __call__(self, input_ids: torch.Tensor, _scores: torch.Tensor | None, **_kwargs: Any) -> torch.Tensor:
+        decisions: list[bool] = []
+        for sequence in input_ids:
+            generated = sequence[self.prompt_length :] if sequence.numel() > self.prompt_length else sequence
+            if not generated.numel() or "}" not in self.tokenizer.decode(generated[-2:], skip_special_tokens=True):
+                decisions.append(False)
+                continue
+            decoded = self.tokenizer.decode(generated, skip_special_tokens=True)
+            text = self._join_initial_text(self.initial_text, decoded)
+            complete = self._has_closed_object(text)
+            decisions.append(complete)
+        self.matched = any(decisions)
+        return torch.tensor(decisions, dtype=torch.bool, device=input_ids.device)
+
+    @staticmethod
+    def _join_initial_text(initial_text: str, generated_text: str) -> str:
+        stripped = str(generated_text).lstrip()
+        if initial_text and stripped.startswith(initial_text):
+            return stripped
+        return str(initial_text) + str(generated_text)
+
+    @staticmethod
+    def _has_closed_object(text: str) -> bool:
+        depth = 0
+        started = False
+        in_string = False
+        escaped = False
+        for char in str(text):
+            if not started:
+                if char == "{":
+                    started = True
+                    depth = 1
+                continue
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return True
+        return False
+
+
 @dataclass
 class EvalChunk:
     frames: list[Image.Image]
@@ -68,7 +127,7 @@ class RecentWindowQAModel:
         self,
         model_name: str,
         device: str | torch.device = "auto",
-        max_new_tokens: int = 256,
+        max_new_tokens: int | None = None,
         attn_implementation: str = "flash_attention_2",
     ) -> None:
         from transformers import AutoProcessor
@@ -79,10 +138,16 @@ class RecentWindowQAModel:
 
         self.model_name = model_name
         self.device = device
-        self.max_new_tokens = int(max_new_tokens)
+        self.max_new_tokens = (
+            None if max_new_tokens is None or int(max_new_tokens) <= 0 else int(max_new_tokens)
+        )
         self._last_ttft_seconds: float = 0.0
         self._last_num_vision_tokens: int = 0
         self._last_num_vision_frames: int = 0
+        self._last_generated_tokens: int = 0
+        self._last_generation_ended_with_eos: bool = False
+        self._last_generation_hit_context_limit: bool = False
+        self._last_generation_stopped_on_complete_json: bool = False
 
         proc_kwargs: dict[str, Any] = {}
         if os.environ.get("MIN_PIXELS"):
@@ -108,6 +173,16 @@ class RecentWindowQAModel:
                 os.environ["WORLD_SIZE"] = _saved_ws
 
         self.model.eval()
+
+        text_config = getattr(self.model.config, "text_config", self.model.config)
+        configured_context = int(getattr(text_config, "max_position_embeddings", 0) or 0)
+        tokenizer_context = int(getattr(self.processor.tokenizer, "model_max_length", 0) or 0)
+        valid_contexts = [
+            value for value in (configured_context, tokenizer_context) if 0 < value < 10**9
+        ]
+        if not valid_contexts:
+            raise ValueError("The model does not expose a finite context-window size.")
+        self.context_window_tokens = min(valid_contexts)
 
         _hf_model = (
             self.model.get_base_model()
@@ -207,15 +282,35 @@ class RecentWindowQAModel:
         return self._infer_module_device(embeddings)
 
     @torch.inference_mode()
-    def _generate_from_model_inputs(self, prompt_length: int, **generate_kwargs: Any) -> str:
+    def _generate_from_model_inputs(
+        self,
+        prompt_length: int,
+        stop_on_complete_json: bool = False,
+        response_prefix: str = "",
+        **generate_kwargs: Any,
+    ) -> str:
         """Run generation from prepared model inputs and decode only new tokens."""
+        generation_budget = self._resolve_generation_budget(
+            self.context_window_tokens, prompt_length, self.max_new_tokens
+        )
         t0 = time.perf_counter()
         streamer = _TTFTStreamer(t0)
+        sequence_prefix_length = self._generation_sequence_prefix_length(
+            prompt_length, generate_kwargs
+        )
+        json_stopper = (
+            _CompleteJsonStoppingCriteria(
+                self.processor.tokenizer, sequence_prefix_length, response_prefix
+            )
+            if stop_on_complete_json
+            else None
+        )
         generated_ids = self.model.generate(
             **generate_kwargs,
-            max_new_tokens=self.max_new_tokens,
+            max_new_tokens=generation_budget,
             do_sample=False,
             streamer=streamer,
+            stopping_criteria=[json_stopper] if json_stopper is not None else None,
         )
         self._last_ttft_seconds = (
             streamer.ttft_seconds
@@ -223,16 +318,63 @@ class RecentWindowQAModel:
             else (time.perf_counter() - t0)
         )
 
-        trimmed = [
-            generated_ids[0][prompt_length:]
-            if generated_ids.shape[1] > prompt_length
+        trimmed_ids = (
+            generated_ids[0][sequence_prefix_length:]
+            if generated_ids.shape[1] > sequence_prefix_length
             else generated_ids[0]
-        ]
-        return self.processor.batch_decode(
-            trimmed,
+        )
+        self._last_generated_tokens = int(trimmed_ids.numel())
+        raw_eos = getattr(self.model.generation_config, "eos_token_id", None)
+        eos_ids = set(raw_eos if isinstance(raw_eos, (list, tuple)) else [raw_eos])
+        eos_ids.discard(None)
+        self._last_generation_ended_with_eos = bool(
+            self._last_generated_tokens and int(trimmed_ids[-1]) in eos_ids
+        )
+        self._last_generation_hit_context_limit = bool(
+            self._last_generated_tokens >= generation_budget
+            and not self._last_generation_ended_with_eos
+        )
+        self._last_generation_stopped_on_complete_json = bool(
+            json_stopper is not None and json_stopper.matched
+        )
+        decoded = self.processor.batch_decode(
+            [trimmed_ids],
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )[0].strip()
+        return _CompleteJsonStoppingCriteria._join_initial_text(response_prefix, decoded)
+
+    @staticmethod
+    def _resolve_generation_budget(
+        context_window_tokens: int,
+        prompt_length: int,
+        artificial_limit: int | None,
+    ) -> int:
+        remaining_context = int(context_window_tokens) - int(prompt_length)
+        if remaining_context < 1:
+            raise ValueError(
+                f"Prompt length {prompt_length} reaches the {context_window_tokens}-token context window."
+            )
+        return (
+            remaining_context
+            if artificial_limit is None or int(artificial_limit) <= 0
+            else min(int(artificial_limit), remaining_context)
+        )
+
+    @staticmethod
+    def _generation_sequence_prefix_length(
+        prompt_length: int, generate_kwargs: dict[str, Any]
+    ) -> int:
+        # Transformers starts decoder-only sequences at length zero when only
+        # inputs_embeds are supplied; input_ids paths retain the prompt prefix.
+        if "inputs_embeds" in generate_kwargs and "input_ids" not in generate_kwargs:
+            return 0
+        return max(0, int(prompt_length))
+
+    @staticmethod
+    def _requests_json_object(prompt: str) -> bool:
+        normalized = " ".join(str(prompt).lower().split())
+        return "return exactly one json" in normalized
 
     @torch.inference_mode()
     def encode_vision(self, frames: list[Image.Image]) -> tuple[torch.Tensor, torch.Tensor]:
@@ -274,6 +416,8 @@ class RecentWindowQAModel:
         self._last_num_vision_frames = int(cached_grid_thw.shape[0]) if cached_grid_thw is not None else 0
 
         question_ids = tokenizer.encode(question, add_special_tokens=False)
+        json_response = self._requests_json_object(question)
+        response_prefix = "{" if json_response else ""
         input_ids_list: list[int] = []
         input_ids_list.extend([self._im_start_id])
         input_ids_list.extend(tokenizer.encode("user\n", add_special_tokens=False))
@@ -286,6 +430,7 @@ class RecentWindowQAModel:
         input_ids_list.extend(tokenizer.encode("\n", add_special_tokens=False))
         input_ids_list.extend([self._im_start_id])
         input_ids_list.extend(tokenizer.encode("assistant\n", add_special_tokens=False))
+        input_ids_list.extend(tokenizer.encode(response_prefix, add_special_tokens=False))
 
         input_ids = torch.tensor([input_ids_list], dtype=torch.long, device=text_device)
         attention_mask = torch.ones_like(input_ids)
@@ -303,6 +448,8 @@ class RecentWindowQAModel:
         )
         return self._generate_from_model_inputs(
             prompt_length=int(input_ids.shape[1]),
+            stop_on_complete_json=json_response,
+            response_prefix=response_prefix,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -330,8 +477,20 @@ class RecentWindowQAModel:
         encoded = self.processor.tokenizer(chat_text, return_tensors="pt")
         input_ids = encoded["input_ids"].to(text_device)
         attention_mask = encoded["attention_mask"].to(text_device)
+        json_response = self._requests_json_object(prompt)
+        response_prefix = "{" if json_response else ""
+        if response_prefix:
+            prefix_ids = torch.tensor(
+                [self.processor.tokenizer.encode(response_prefix, add_special_tokens=False)],
+                dtype=input_ids.dtype,
+                device=text_device,
+            )
+            input_ids = torch.cat([input_ids, prefix_ids], dim=1)
+            attention_mask = torch.ones_like(input_ids)
         return self._generate_from_model_inputs(
             prompt_length=int(input_ids.shape[1]),
+            stop_on_complete_json=json_response,
+            response_prefix=response_prefix,
             input_ids=input_ids,
             attention_mask=attention_mask,
         )
@@ -355,10 +514,10 @@ def extract_mcq_answer(response: str | None) -> str | None:
     if response is None or not str(response).strip():
         return None
     text = str(response).strip().upper()
-    match = re.search(r"\b([A-D])\b", text)
+    match = re.search(r"\b([A-E])\b", text)
     if match:
         return match.group(1)
-    match = re.search(r"\b([1-4])\b", text)
+    match = re.search(r"\b([1-5])\b", text)
     if match:
         return chr(64 + int(match.group(1)))
     return None

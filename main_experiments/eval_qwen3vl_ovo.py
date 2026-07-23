@@ -229,7 +229,17 @@ def main() -> None:
         default=None,
         help="Optional sample cap applied independently to backward/realtime/forward after shuffle.",
     )
+    parser.add_argument(
+        "--eval_splits",
+        default="backward,realtime,forward",
+        help="Comma-separated subset of backward,realtime,forward.",
+    )
     args = parser.parse_args()
+
+    eval_splits = {item.strip().lower() for item in args.eval_splits.split(",") if item.strip()}
+    invalid_splits = eval_splits - {"backward", "realtime", "forward"}
+    if not eval_splits or invalid_splits:
+        raise ValueError(f"Invalid --eval_splits: {args.eval_splits}")
 
     accelerator = Accelerator()
 
@@ -239,6 +249,12 @@ def main() -> None:
     backward_anno = [anno for anno in annotations if anno["task"] in BACKWARD_TASKS]
     realtime_anno = [anno for anno in annotations if anno["task"] in REAL_TIME_TASKS]
     forward_anno = [anno for anno in annotations if anno["task"] in FORWARD_TASKS]
+    if "backward" not in eval_splits:
+        backward_anno = []
+    if "realtime" not in eval_splits:
+        realtime_anno = []
+    if "forward" not in eval_splits:
+        forward_anno = []
 
     random.seed(42)
     random.shuffle(backward_anno)
@@ -432,6 +448,7 @@ def main() -> None:
                         "clip_device": args.clip_device if args.frame_selection in clip_selections else None,
                         "clip_batch_size": args.clip_batch_size if args.frame_selection in clip_selections else None,
                         "max_samples_per_split": args.max_samples_per_split,
+                        "eval_splits": sorted(eval_splits),
                     },
                     "backward": all_backward,
                     "realtime": all_realtime,

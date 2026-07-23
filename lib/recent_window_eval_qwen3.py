@@ -29,17 +29,23 @@ class RecentWindowQAModel(_BaseRecentWindowQAModel):
         self,
         model_name: str,
         device: str | torch.device = "auto",
-        max_new_tokens: int = 256,
+        max_new_tokens: int | None = None,
         attn_implementation: str = "flash_attention_2",
     ) -> None:
         from transformers import AutoModelForImageTextToText, AutoProcessor
 
         self.model_name = model_name
         self.device = device
-        self.max_new_tokens = int(max_new_tokens)
+        self.max_new_tokens = (
+            None if max_new_tokens is None or int(max_new_tokens) <= 0 else int(max_new_tokens)
+        )
         self._last_ttft_seconds = 0.0
         self._last_num_vision_tokens = 0
         self._last_num_vision_frames = 0
+        self._last_generated_tokens = 0
+        self._last_generation_ended_with_eos = False
+        self._last_generation_hit_context_limit = False
+        self._last_generation_stopped_on_complete_json = False
 
         proc_kwargs: dict[str, object] = {}
         if os.environ.get("MIN_PIXELS"):
@@ -64,6 +70,16 @@ class RecentWindowQAModel(_BaseRecentWindowQAModel):
         if device != "auto":
             self.model.to(device)
         self.model.eval()
+
+        text_config = getattr(self.model.config, "text_config", self.model.config)
+        configured_context = int(getattr(text_config, "max_position_embeddings", 0) or 0)
+        tokenizer_context = int(getattr(self.processor.tokenizer, "model_max_length", 0) or 0)
+        valid_contexts = [
+            value for value in (configured_context, tokenizer_context) if 0 < value < 10**9
+        ]
+        if not valid_contexts:
+            raise ValueError("The model does not expose a finite context-window size.")
+        self.context_window_tokens = min(valid_contexts)
 
         self._hf_model = self.model
         self._visual = self.model.model.visual
@@ -207,6 +223,8 @@ class RecentWindowQAModel(_BaseRecentWindowQAModel):
         self._last_num_vision_frames = int(vision_grid_thw.shape[0]) if vision_grid_thw is not None else 0
 
         question_ids = tokenizer.encode(question, add_special_tokens=False)
+        json_response = self._requests_json_object(question)
+        response_prefix = "{" if json_response else ""
         grid_rows = vision_grid_thw.to(device)
         tokens_per_frame = (grid_rows.prod(dim=-1) // (self.merge_size**2)).tolist()
         expected_tokens = sum(int(n) for n in tokens_per_frame)
@@ -229,6 +247,7 @@ class RecentWindowQAModel(_BaseRecentWindowQAModel):
         input_ids_list.extend(tokenizer.encode("\n", add_special_tokens=False))
         input_ids_list.extend([self.im_start_id])
         input_ids_list.extend(tokenizer.encode("assistant\n", add_special_tokens=False))
+        input_ids_list.extend(tokenizer.encode(response_prefix, add_special_tokens=False))
 
         input_ids = torch.tensor([input_ids_list], dtype=torch.long, device=device)
         attention_mask = torch.ones_like(input_ids)
@@ -248,6 +267,8 @@ class RecentWindowQAModel(_BaseRecentWindowQAModel):
 
         return self._generate_from_model_inputs(
             prompt_length=len(input_ids[0]),
+            stop_on_complete_json=json_response,
+            response_prefix=response_prefix,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -586,9 +607,9 @@ def _is_invalid_memory_line(text: str) -> bool:
     if not stripped:
         return True
     lowered = stripped.lower()
-    if re.fullmatch(r"[A-D][.)]?", stripped):
+    if re.fullmatch(r"[A-E][.)]?", stripped):
         return True
-    if re.match(r"^[A-D][.)]\s", stripped):
+    if re.match(r"^[A-E][.)]\s", stripped):
         return True
     banned_phrases = (
         "option ",
@@ -610,9 +631,9 @@ def _is_invalid_state_memory_line(text: str) -> bool:
     if not stripped:
         return True
     lowered = stripped.lower()
-    if re.fullmatch(r"(?:[A-D][.)]?|yes|no)", stripped, flags=re.IGNORECASE):
+    if re.fullmatch(r"(?:[A-E][.)]?|yes|no)", stripped, flags=re.IGNORECASE):
         return True
-    if re.match(r"^[A-D][.)]\s", stripped):
+    if re.match(r"^[A-E][.)]\s", stripped):
         return True
     banned_phrases = (
         "option ",
@@ -718,7 +739,7 @@ def _sanitize_vst_memory_question_v2(question_prompt: str) -> str:
         line = raw_line.strip()
         if not line:
             continue
-        if re.match(r"^[A-D][.)]\s+", line):
+        if re.match(r"^[A-E][.)]\s+", line):
             continue
         lowered = line.lower()
         if "answer with the option" in lowered or "choose the correct" in lowered:
@@ -813,9 +834,9 @@ def _is_answer_like_memory_line(text: str) -> bool:
     lowered = stripped.lower()
     if lowered in {"none", "n/a", "na", "yes", "no"}:
         return True
-    if re.fullmatch(r"[A-D][.)]?", stripped):
+    if re.fullmatch(r"[A-E][.)]?", stripped):
         return True
-    if re.match(r"^[A-D][.)]\s", stripped):
+    if re.match(r"^[A-E][.)]\s", stripped):
         return True
     banned_phrases = (
         "option ",
@@ -883,7 +904,7 @@ def _temporary_max_new_tokens(qa: RecentWindowQAModel, max_new_tokens: int | Non
         def __init__(self, model: RecentWindowQAModel, limit: int | None) -> None:
             self.model = model
             self.limit = limit
-            self.previous = int(model.max_new_tokens)
+            self.previous = model.max_new_tokens
 
         def __enter__(self) -> None:
             if self.limit is not None:

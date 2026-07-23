@@ -71,6 +71,20 @@ class CLIPTopKFrameSelector:
         return scores
 
     @torch.inference_mode()
+    def text_embedding(self, text: str) -> torch.Tensor:
+        """Return one normalized CLIP text embedding on CPU."""
+
+        text_inputs = self.processor(
+            text=[str(text)],
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+        )
+        text_inputs = {key: value.to(self.device) for key, value in text_inputs.items()}
+        text_features = self.model.get_text_features(**text_inputs)
+        return torch.nn.functional.normalize(text_features, dim=-1).float().cpu()[0]
+
+    @torch.inference_mode()
     def image_embeddings(self, frames: Sequence[Image.Image]) -> torch.Tensor:
         """返回归一化图像向量，供流式变化检测复用冻结 CLIP。"""
         if not frames:

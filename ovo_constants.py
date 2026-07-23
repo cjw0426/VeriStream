@@ -39,14 +39,14 @@ CRR_PROMPT_TEMPLATE = (
 # ---------------------------------------------------------------------------
 
 def extract_br_answer(response):
-    """Extract A/B/C/D answer from response text."""
+    """Extract A/B/C/D/E answer from response text."""
     if not response or not str(response).strip():
         return None
     s = str(response).strip()
-    m = re.search(r"\b([A-D])\b", s.upper())
+    m = re.search(r"\b([A-E])\b", s.upper())
     if m:
         return m.group(1)
-    m = re.search(r"\b([1-4])\b", s)
+    m = re.search(r"\b([1-5])\b", s)
     if m:
         return chr(64 + int(m.group(1)))
     return None
