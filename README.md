@@ -5,10 +5,10 @@ main method, **VeriStream**, organizes a causal video prefix as persistent evide
 bounded LLM controller decide whether to search, inspect, expand, compare, or stop. The repository
 evaluates OVO-Bench **Backward** and **Realtime** tasks; Forward is outside the primary experiment.
 
-The publication figure should be generated with the reviewed
-[GPT Image 2 method prompt](docs/veristream/gpt_image2_method_figure_prompt.md) and saved as
-`figures/veristream_method.png` after visual inspection. The prompt includes a correction pass and a
-logical-consistency checklist; no generated placeholder figure is committed.
+The reviewed [method figure](VeriStream.png) was generated with OpenAI GPT Image 2
+from the repository's [method-figure prompt](docs/veristream/gpt_image2_method_figure_prompt.md).
+Its method structure and technical content were specified and reviewed by the authors; image generation
+was not used for method design, implementation, experimentation, or result analysis.
 
 ## Method At A Glance
 
@@ -119,10 +119,22 @@ PY
 
 OVO-Bench data is not redistributed here. Follow its official license and the licenses of source videos.
 
-## Required Uniform Baseline
+## Reproduction Guide
 
-The required baseline uses the same Qwen3-VL-8B checkpoint, 32 frames uniformly sampled from the causal
-prefix, and one direct QA call. It evaluates only Backward and Realtime:
+All commands below evaluate only the 631 Backward and 837 Realtime questions. Run them from the repository
+root, replace `/path/to/Qwen3-VL-8B-Instruct` with the same local checkpoint in every command, and keep a
+different result directory and rendezvous port for every experiment:
+
+```bash
+mkdir -p logs main_experiments/results
+```
+
+The evaluators write rank-local checkpoints and resume completed questions when the identical command is
+restarted. Do not reuse one result directory across different configurations.
+
+### Recent4 Baseline
+
+This is the no-memory, single-turn current-visual baseline reported in Section 4.2 of the experiment report:
 
 ```bash
 nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
@@ -130,7 +142,73 @@ nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
   CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
   accelerate launch --num_processes=8 --main_process_port=29730 \
     main_experiments/eval_qwen3vl_ovo.py \
-    --model_path /data1/chenjunwei/models/Qwen3-VL-8B-Instruct \
+    --model_path /path/to/Qwen3-VL-8B-Instruct \
+    --anno_path data/ovo_bench/ovo_bench_new.json \
+    --chunked_dir data/ovo_bench/chunked_videos \
+    --result_dir main_experiments/results/repro_recent4_8b_br_rt \
+    --frame_selection recent --recent_frames_only 4 \
+    --chunk_duration 1.0 --fps 1.0 --max_qa_tokens 256 \
+    --eval_splits backward,realtime \
+  > logs/repro_recent4_8b_br_rt.out 2>&1 &
+```
+
+### Action-Fact Text-Memory Baselines
+
+Both baselines retain exact Recent4 for final QA and compress 16 selected historical positions into at most
+three action-fact memory items. The first uses question-independent temporal coverage:
+
+```bash
+nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
+  DECORD_EOF_RETRY_MAX=20480 QWEN_EXACT_RECENT_DECODE=1 \
+  CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+  accelerate launch --num_processes=8 --main_process_port=29731 \
+    main_experiments/eval_qwen3vl_ovo.py \
+    --model_path /path/to/Qwen3-VL-8B-Instruct \
+    --anno_path data/ovo_bench/ovo_bench_new.json \
+    --chunked_dir data/ovo_bench/chunked_videos \
+    --result_dir main_experiments/results/repro_action_fact_uniform16_8b_br_rt \
+    --frame_selection recent_memory_uniform \
+    --recent_frames_only 4 --supplemental_frames 16 \
+    --memory_num_items 3 --memory_group_size 4 \
+    --chunk_duration 1.0 --fps 1.0 --max_qa_tokens 256 \
+    --eval_splits backward,realtime \
+  > logs/repro_action_fact_uniform16_8b_br_rt.out 2>&1 &
+```
+
+The second selects the 16 historical positions with question-frame CLIP similarity:
+
+```bash
+nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
+  DECORD_EOF_RETRY_MAX=20480 QWEN_EXACT_RECENT_DECODE=1 \
+  CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+  accelerate launch --num_processes=8 --main_process_port=29732 \
+    main_experiments/eval_qwen3vl_ovo.py \
+    --model_path /path/to/Qwen3-VL-8B-Instruct \
+    --anno_path data/ovo_bench/ovo_bench_new.json \
+    --chunked_dir data/ovo_bench/chunked_videos \
+    --result_dir main_experiments/results/repro_action_fact_clip16_8b_br_rt \
+    --frame_selection recent_memory_clip_topk \
+    --recent_frames_only 4 --supplemental_frames 16 \
+    --memory_num_items 3 --memory_group_size 4 \
+    --clip_model_path openai/clip-vit-large-patch14 \
+    --chunk_duration 1.0 --fps 1.0 --max_qa_tokens 256 \
+    --eval_splits backward,realtime \
+  > logs/repro_action_fact_clip16_8b_br_rt.out 2>&1 &
+```
+
+### Causal-Prefix Uniform32 Baseline
+
+The required baseline uses the same Qwen3-VL-8B checkpoint, 32 frames uniformly sampled from the causal
+prefix, and one direct QA call. It is retained for strict compliance with the task's uniform-sampling
+baseline requirement, although Section 4.2 focuses on Recent4 and Action-fact comparisons:
+
+```bash
+nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
+  DECORD_EOF_RETRY_MAX=20480 QWEN_EXACT_RECENT_DECODE=1 \
+  CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
+  accelerate launch --num_processes=8 --main_process_port=29733 \
+    main_experiments/eval_qwen3vl_ovo.py \
+    --model_path /path/to/Qwen3-VL-8B-Instruct \
     --anno_path data/ovo_bench/ovo_bench_new.json \
     --chunked_dir data/ovo_bench/chunked_videos \
     --result_dir main_experiments/results/ovo_qwen3vl_8b_uniform32_br_rt \
@@ -140,7 +218,7 @@ nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
   > logs/ovo_qwen3vl_8b_uniform32_br_rt.out 2>&1 &
 ```
 
-## VeriStream Evaluation
+### VeriStream Evaluation
 
 The following is the primary autonomous-agent run. Omit `--share-model` to load independent perception
 and reasoning instances on each GPU. The latest semantic index uses schema 6 and must not reuse an older
@@ -150,10 +228,10 @@ cache.
 nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
   DECORD_EOF_RETRY_MAX=20480 \
   CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-  accelerate launch --num_processes=8 --main_process_port=29731 \
+  accelerate launch --num_processes=8 --main_process_port=29734 \
     main_experiments/eval_qwen3vl_ovo_budgeted.py \
-    --perception-model-path /data1/chenjunwei/models/Qwen3-VL-8B-Instruct \
-    --reasoning-model-path /data1/chenjunwei/models/Qwen3-VL-8B-Instruct \
+    --perception-model-path /path/to/Qwen3-VL-8B-Instruct \
+    --reasoning-model-path /path/to/Qwen3-VL-8B-Instruct \
     --anno-path data/ovo_bench/ovo_bench_new.json \
     --chunked-dir data/ovo_bench/chunked_videos \
     --result-dir main_experiments/results/veristream_8b_agent_br_rt \
@@ -173,6 +251,7 @@ nohup env NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 \
     --minimum-visual-similarity 0.20 --minimum-bm25-score 0.10 \
     --clip-model openai/clip-vit-large-patch14 \
     --text-embedding-model BAAI/bge-base-en-v1.5 \
+    --eval-splits backward realtime \
   > logs/veristream_8b_agent_br_rt.out 2>&1 &
 ```
 
@@ -183,6 +262,13 @@ accuracy-cost frontier. Each result stores the full tool trace and stop reason.
 Restarting the same command resumes completed rows and compatible schema-6 cache entries. To reuse a
 completed index in a new question-time ablation, pass `--index-cache-dir OLD_RESULT_DIR/memory`; the source
 is read-only. Change the result directory or pass `--rebuild-memory` only when rebuilding intentionally.
+
+### Smoke Test Before a Full Run
+
+Before occupying eight GPUs for the full benchmark, append `--max_samples_per_split 2` to a Recent4 or
+Action-fact command. For VeriStream, append `--max-samples-per-task 1` and use a new smoke-test result
+directory. Remove the sampling flag and change to another empty result directory for the formal run; a
+sampled result directory must not be resumed as a full evaluation.
 
 ## Scoring And Analysis
 
